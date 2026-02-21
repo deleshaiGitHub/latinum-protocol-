@@ -21,3 +21,12 @@ This document serves as the structural source of truth for AI Development Agents
 - **Cross-Chain**: LayerZero V2.
 - **DEX Aggregator**: Squid Router / Li.Fi SDK.
 - **Stablecoin**: USDC (Primary Backing).
+
+## ⚖️ Finalized Logic Constants (v1.1)
+- MINT_RATE = 500,000 (1 USDC : 500k GPL)
+- MAX_SUPPLY = 500,000,000,000 * 10**18
+- SOFT_THRESHOLD = 250,000 * 10**6 (USDC 6-decimal standard)
+- HARD_CAP = 1,000,000 * 10**6
+- PLAN_B_TIMER = 180 Days
+- EXIT_TAX = 5% (Rule #1)
+- NAGUS_FEE = 0.25% (Auto-Buy/Burn)

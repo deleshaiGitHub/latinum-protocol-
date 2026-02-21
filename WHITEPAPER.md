@@ -42,3 +42,22 @@ The NagusInsuranceVault acts as a protocol-owned safety buffer. It is used for:
 Arbitrage Rebalancing: Maintaining price parity across chains.
 Impermanent Loss Mitigation: Subsidizing the main DEX pools during high volatility.
 De-peg Protection: Backstopping the treasury if a whitelisted stablecoin loses its peg.
+
+----------------------------------------------------------------
+
+DEV_WHITEPAPER_V1.1 (Amendment)
+Copy and replace the "Tokenomics" and "Press" sections in your DEV_WHITEPAPER_V1.md with these updated values.
+2. Updated Tokenomics Architecture
+Mint Rate: 1.00 USDC = 500,000 $GPL.
+Total Hard Cap: 500,000,000,000 (500B) $GPL.
+Hard Cap Inflow: $1,000,000 USDC (Total Treasury Goal).
+Soft Threshold: $250,000 USDC (Minimum to trigger DEX launch).
+3. The "Decay or Deploy" Fail-Safe (Plan B)
+To protect early participants from project stagnation:
+The Timer: A 180-day countdown begins at the deployment of the first LatinumPress contract.
+The Trigger: If the $1,000,000 Hard Cap is not met within 180 days:
+Minting Terminated: No further 
+ can be minted.
+Scarcity Event: All unminted 
+ remaining in the MAX_SUPPLY (up to 500B) are permanently Burned.
+Forced Launch: The Protocol initializes the DEX with the current Treasury balance, ensuring holders have immediate exit liquidity and fee-earning potential regardless of total raise.

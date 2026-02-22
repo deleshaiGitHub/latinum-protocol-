@@ -30,3 +30,10 @@ This document serves as the structural source of truth for AI Development Agents
 - PLAN_B_TIMER = 180 Days
 - EXIT_TAX = 5% (Rule #1)
 - NAGUS_FEE = 0.25% (Auto-Buy/Burn)
+
+- ## 🌐 PulseChain Testnet (v4) Staging
+- **Chain ID**: 943
+- **RPC**: https://rpc.v4.testnet.pulsechain.com
+- **Currency**: tPLS (Test Pulse)
+- **Explorer**: https://otter.v4.testnet.pulsechain.com
+

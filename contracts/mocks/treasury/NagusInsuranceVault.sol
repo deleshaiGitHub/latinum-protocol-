@@ -1,99 +1,35 @@
-{\rtf1\ansi\ansicpg1252\cocoartf2639
-\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
-{\colortbl;\red255\green255\blue255;}
-{\*\expandedcolortbl;;}
-\margl1440\margr1440\vieww22980\viewh15240\viewkind0
-\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
 
-\f0\fs24 \cf0 // SPDX-License-Identifier: MIT\
-pragma solidity 0.8.24;\
-\
-import \{ OApp, Origin, MessagingReceipt \} from "@layerzerolabs/oapp-evm/contracts/oapp/OApp.sol";\
-import \{ Ownable \} from "@openzeppelin/contracts/access/Ownable.sol";\
-import \{ IERC20 \} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";\
-\
-interface IPulseXRouter \{\
-    function swapExactTokensForTokens(\
-        uint amountIn,\
-        uint amountOutMin,\
-        address[] calldata path,\
-        address to,\
-        uint deadline\
-    ) external returns (uint[] memory amounts);\
-\}\
-\
-/**\
- * @title NagusInsuranceVault\
- * @author Latinum Protocol Architect\
- * @notice Defends the $0.000002 GPL floor by sweeping USDC fees into the burn address.\
- */\
-contract NagusInsuranceVault is OApp \{\
-    // PulseChain V4 Testnet Constants\
-    address public constant PULSEX_ROUTER = 0x165C58A599A04810239062FfA8E40798606B3392;\
-    address public constant DEAD_ADDRESS = 0x000000000000000000000000000000000000dEaD;\
-    \
-    address public immutable usdc;\
-    address public immutable gpl;\
-\
-    event SweepAndBurn(uint256 usdcAmount, uint256 gplBurned);\
-\
-    constructor(\
-        address _endpoint, \
-        address _delegate,\
-        address _usdc,\
-        address _gpl\
-    ) OApp(_endpoint, _delegate) Ownable(_delegate) \{\
-        usdc = _usdc;\
-        gpl = _gpl;\
-    \}\
-\
-    /**\
-     * @notice Swaps entire USDC balance for GPL and burns it.\
-     * @dev Triggered locally or via cross-chain OApp call.\
-     */\
-    function sweepAndBurn() public \{\
-        uint256 usdcBalance = IERC20(usdc).balanceOf(address(this));\
-        require(usdcBalance > 0, "NagusVault: No USDC balance");\
-\
-        // Max approval for PulseX Router\
-        if (IERC20(usdc).allowance(address(this), PULSEX_ROUTER) < usdcBalance) \{\
-            IERC20(usdc).approve(PULSEX_ROUTER, type(uint256).max);\
-        \}\
-\
-        address[] memory path = new address[](2);\
-        path[0] = usdc;\
-        path[1] = gpl;\
-\
-        // Perform the swap and send directly to DEAD_ADDRESS\
-        uint[] memory amounts = IPulseXRouter(PULSEX_ROUTER).swapExactTokensForTokens(\
-            usdcBalance,\
-            0, // In sandbox, 0 is fine. On Mainnet, calculate minOut based on floor price logic.\
-            path,\
-            DEAD_ADDRESS,\
-            block.timestamp + 60\
-        );\
-\
-        emit SweepAndBurn(usdcBalance, amounts[1]);\
-    \}\
-\
-    /**\
-     * @dev LayerZero V2 receiver. Home Chain Hub triggers this to defend the floor.\
-     */\
-    function _lzReceive(\
-        Origin calldata /*_origin*/,\
-        bytes32 /*_guid*/,\
-        bytes calldata /*_message*/,\
-        address /*_executor*/,\
-        bytes calldata /*_extraData*/\
-    ) internal override \{\
-        sweepAndBurn();\
-    \}\
-\
-    /**\
-     * @notice Emergency sweep in case of pathing issues.\
-     */\
-    function recoverToken(address _token, uint256 _amount) external onlyOwner \{\
-        IERC20(_token).transfer(owner(), _amount);\
-    \}\
-\}\
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+
+/**
+ * @title NagusInsuranceVault
+ * @dev Protocol-owned safety buffer for de-peg protection and IL mitigation.
+ */
+contract NagusInsuranceVault is Ownable {
+    IERC20 public immutable usdc;
+
+    event FundsWithdrawn(address indexed to, uint256 amount);
+
+    constructor(address _usdc, address _delegate) Ownable(_delegate) {
+        usdc = IERC20(_usdc);
+    }
+
+    /**
+     * @dev Rule #1: Only the Nagus (Owner) can withdraw for protocol stability.
+     */
+    function emergencyWithdraw(address _to, uint256 _amount) external onlyOwner {
+        require(usdc.balanceOf(address(this)) >= _amount, "Vault: Insufficient balance");
+        usdc.transfer(_to, _amount);
+        emit FundsWithdrawn(_to, _amount);
+    }
+
+    /**
+     * @dev Returns total USDC reserve held in the vault.
+     */
+    function getReserveBalance() external view returns (uint256) {
+        return usdc.balanceOf(address(this));
+    }
 }

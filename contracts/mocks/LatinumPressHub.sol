@@ -4,7 +4,7 @@ pragma solidity ^0.8.24;
 import "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/Address.sol";
 
 interface IGPLToken {
     function mint(address to, uint256 amount) external;
@@ -25,6 +25,7 @@ contract LatinumPressHub is OApp, ReentrancyGuard {
     uint256 public constant MINT_RATE = 500_000; // 1 USDC = 500k GPL
     uint256 public constant NAGUS_FEE_BPS = 25; // 0.25%
     uint256 public constant REFUND_WINDOW = 30 days;
+    uint256 public constant EXIT_TAX_BPS = 500; // 5% (for future use)
     
     // -------------------- STATE VARIABLES --------------------
     // Core
@@ -77,15 +78,15 @@ contract LatinumPressHub is OApp, ReentrancyGuard {
         address _delegate,
         address _usdc,
         address _gplToken
-    ) OApp(_lzEndpoint, _delegate) ReentrancyGuard() {
+    ) 
+        OApp(_lzEndpoint, _delegate) 
+        ReentrancyGuard() 
+    {
         usdc = IERC20(_usdc);
         gplToken = IGPLToken(_gplToken);
-    }
-
-    // -------------------- MODIFIERS --------------------
-    modifier onlyOwner() {
-        require(owner() == msg.sender, "Ownable: caller is not the owner");
-        _;
+        
+        // Explicitly transfer ownership to _delegate (though OApp should handle this)
+        _transferOwnership(_delegate);
     }
 
     // -------------------- ADMIN FUNCTIONS --------------------
@@ -214,7 +215,7 @@ contract LatinumPressHub is OApp, ReentrancyGuard {
             
             emit SolanaRefundMarked(msg.sender, lockedGPL);
         } else {
-            uint256 usdcRefund = (originalDeposits[msg.sender] * 9975) / 10000;
+            uint256 usdcRefund = _calculateRefund(lockedGPL, originalDeposits[msg.sender]);
             
             gplToken.burn(lockedGPL);
             globalGestationBalances[msg.sender] = 0;
@@ -267,6 +268,10 @@ contract LatinumPressHub is OApp, ReentrancyGuard {
         uint256 grossGPL = scaledUSDC * MINT_RATE;
         nagusFee = (grossGPL * NAGUS_FEE_BPS) / 10000;
         userAmount = grossGPL - nagusFee;
+    }
+
+    function _calculateRefund(uint256 lockedGPL, uint256 originalDeposit) internal pure returns (uint256) {
+        return (originalDeposit * 9975) / 10000; // 99.75%
     }
 
     // -------------------- FALLBACK --------------------

@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 import "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/utils/Address.sol";
@@ -15,7 +16,7 @@ interface IGPLToken {
 /**
  * @title LatinumPressHub
  * @dev Central hub for Latinum Protocol on Base Sepolia
- * v1.6 Ironclad
+ * v1.6 Ironclad - FINAL
  */
 contract LatinumPressHub is OApp, ReentrancyGuard {
     using Address for address payable;
@@ -80,13 +81,11 @@ contract LatinumPressHub is OApp, ReentrancyGuard {
         address _gplToken
     ) 
         OApp(_lzEndpoint, _delegate) 
+        Ownable(_delegate)
         ReentrancyGuard() 
     {
         usdc = IERC20(_usdc);
         gplToken = IGPLToken(_gplToken);
-        
-        // Explicitly transfer ownership to _delegate (though OApp should handle this)
-        _transferOwnership(_delegate);
     }
 
     // -------------------- ADMIN FUNCTIONS --------------------
@@ -215,7 +214,7 @@ contract LatinumPressHub is OApp, ReentrancyGuard {
             
             emit SolanaRefundMarked(msg.sender, lockedGPL);
         } else {
-            uint256 usdcRefund = _calculateRefund(lockedGPL, originalDeposits[msg.sender]);
+            uint256 usdcRefund = _calculateRefund(originalDeposits[msg.sender]);
             
             gplToken.burn(lockedGPL);
             globalGestationBalances[msg.sender] = 0;
@@ -270,7 +269,7 @@ contract LatinumPressHub is OApp, ReentrancyGuard {
         userAmount = grossGPL - nagusFee;
     }
 
-    function _calculateRefund(uint256 lockedGPL, uint256 originalDeposit) internal pure returns (uint256) {
+    function _calculateRefund(uint256 originalDeposit) internal pure returns (uint256) {
         return (originalDeposit * 9975) / 10000; // 99.75%
     }
 

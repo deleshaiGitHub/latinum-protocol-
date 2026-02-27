@@ -85,3 +85,15 @@ MockUSDC	0xE91E3318C301b6BeF3D8319300deBFEe45A8c44D	Treasury Backing (6 Decimals
 GPL (OFT-V2)	0xD816C8083A7150D2D9f545e6ECd9d612115C6B4a	Native Asset (Owner: LatinumPress)
 LatinumPress	0x4e1Ee74f7cB0Ee201f267139fA683ad4A2294C3c	Minting Engine / Gestation Vault
 Nagus Vault	0xBdeeAD5e48084e8e64bF674Abc86609aC0c7C918	0.25% Insurance Reserve
+
+----------------------------------------------------------------
+
+DEV_WHITEPAPER_V1.3 (The "Ironclad" Amendment)
+Add this section to your ARCHITECTURE.md/WHITEPAPER.md:
+8. Security & Emergency Protocols (The "Jarvis" Shield)
+
+    8.1 Manual Kill Switch (emergencyAbort): The Protocol Architect retains a manual override to stop minting and enable the Refund Phase if market conditions or technical hurdles jeopardize the $1M Treasury goal.
+    8.2 Pull-Based Redemptions: To prevent "Gas Exhaustion" of the Treasury, the Protocol will never "push" refunds to users. Users must initiate a claimRefund() transaction. This ensures the protocol remains solvent regardless of the number of participants.
+    8.3 The "Cost of Business" Refund (Option B): In an Abort scenario, users are refunded their Net Deposit (99.75%). The 0.25% Nagus Fee is considered a non-refundable protocol entry cost, ensuring the Nagus Insurance Vault remains capitalized for future iterations.
+    8.4 Reentrancy Protection: All value-moving functions (mintGPL, claimRefund) follow the Checks-Effects-Interactions pattern. Internal state (balances) is zeroed before external transfers occur.
+    8.5 Governance Evolution: Post-Beta, the onlyOwner modifier will be transferred from a "Hot Wallet" to a Gnosis Safe Multisig on Base.

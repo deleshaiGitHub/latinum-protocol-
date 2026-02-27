@@ -61,3 +61,27 @@ Minting Terminated: No further
 Scarcity Event: All unminted 
  remaining in the MAX_SUPPLY (up to 500B) are permanently Burned.
 Forced Launch: The Protocol initializes the DEX with the current Treasury balance, ensuring holders have immediate exit liquidity and fee-earning potential regardless of total raise.
+
+---------------------------------------------------------------
+
+📜 Updated DEV_WHITEPAPER_V1.2 (Deployment Log)
+Add this to your documentation to solidify the "Perfect Deployment" state:
+Phase 1: Genesis Deployment (Completed)
+
+    The Reserve: Deployed MockUSDC to simulate 6-decimal stablecoin inflow.
+    The Asset: Deployed GoldPressedLatinum ($GPL) via LayerZero V2 (EID: 40245).
+    The Brain: Deployed LatinumPress with the 500,000:1 ratio logic.
+    The Tribute: Deployed NagusInsuranceVault to capture protocol-owned liquidity.
+
+Phase 2: Critical Wiring (Verified)
+
+    Ownership Handover: $GPL ownership transferred to LatinumPress. The Press is now the only entity capable of expanding the supply (up to 500B).
+    Treasury Link: LatinumPress pointed to NagusInsuranceVault for fee redirection.
+    First Mint Success: Verified 1.00 USDC deposit results in 498.75 $GPL (Post-tax) held in the GestationVault.
+
+    Latinum Protocol: Base Sepolia Registry
+Component	Address	Role
+MockUSDC	0xE91E3318C301b6BeF3D8319300deBFEe45A8c44D	Treasury Backing (6 Decimals)
+GPL (OFT-V2)	0xD816C8083A7150D2D9f545e6ECd9d612115C6B4a	Native Asset (Owner: LatinumPress)
+LatinumPress	0x4e1Ee74f7cB0Ee201f267139fA683ad4A2294C3c	Minting Engine / Gestation Vault
+Nagus Vault	0xBdeeAD5e48084e8e64bF674Abc86609aC0c7C918	0.25% Insurance Reserve

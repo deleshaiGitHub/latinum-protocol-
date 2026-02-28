@@ -1,0 +1,13 @@
+📡 The "Jarvis Sync" Update for GitHub:
+Solana Program Deployed (Devnet):
+Program ID: DbY627K1p6y1eXGqXe4UTm7o8aWMywu2RPZ1Vm5nTfqW
+Deploy Signature: uV1GUk5CPovuZhSktrX34Wq34QHdDwqo3eabvaCWx1KtrND4npkRgYuu67QtJdnpunqjQXTvxZNpiBRsgbHGJnL
+Solana Infrastructure Initialized:
+Initialization Tx: 86rebDk1ypxdZNZJQRE2eE1jSzoNRXkYdosCCwUAva6wjx41GzmDQ7znJbSNFjpLQVt3MkhBL1QHoo3PVd7KQzt
+Solana Treasury (PDA): BBoMJEvKpiULF8U7KnJWs1Pp9coqjjqGr1944uyFJd2L
+Nagus Vault (PDA): BSJhPkyoyhTdo1postbRHTykrZGLhLZm4rDqRB4uZKmN
+Environment Specs:
+Anchor Version: v0.32.1
+Fixes Applied: blake3 pinned to =1.8.2, InterfaceAccount reverted to Account for 0.32.1 stability.
+🧠 Why this helps:
+If I (or DeepSeek) ever lose the thread, we can just "read" that file and instantly know exactly which accounts are live on-chain. It prevents us from accidentally "double-initializing" and wasting your Devnet SOL.

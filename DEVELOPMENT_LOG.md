@@ -417,3 +417,53 @@ Lead Jarvis, this implementation gives you:
 The only remaining decision is how to handle the refund liquidity gap. I recommend implementing the "Virtual Refund with Claim Pattern" I outlined above. This keeps funds secure in Solana PDA while giving users a clear path to recovery.
 
 Ready for next steps, Lead.
+
+-------------------------------------------------------
+
+deepseek update...
+Perfect. Here's the **updated summary** with the NagusVault included:
+
+---
+
+# 🪙 Latinum Protocol – Status Report (Feb 27, 2026)
+
+## ✅ What's Deployed (Base Sepolia Testnet)
+
+| Contract | Address | Notes |
+|----------|---------|-------|
+| **MockUSDC** | `0xE91E3318C301b6BeF3D8319300deBFEe45A8c44D` | 6-decimal test token |
+| **GPL Token (OFT)** | `0x524F3Cd7A9fa89C4A070f80594468558EE0E0BA4` | 500B hard cap, only Press can mint |
+| **LatinumPress** | `0x41ab2B71D5d4E6b68eeBd1BA2272eD50D436f105` | Minting engine with 0.25% Nagus fee |
+| **NagusInsuranceVault** | `0xBdeeAD5e48084e8e64bF674Abc86609aC0c7C918` | Fee collector – already receiving 0.25% |
+
+## 🔗 Critical Wiring
+- ✅ `GPL.setHub(LatinumPress)` executed – Press is the **only** address that can mint
+- ✅ Press sends 0.25% fee to NagusVault on every mint
+- ✅ Vault is active and accumulating GPL
+
+## 🧪 Verified Functionality
+- ✅ **Mint test successful** via Remix (tx: `0xc8ff...bae0`)
+- ✅ 1 USDC → **498,750 GPL** to user + **1,250 GPL** to NagusVault
+- ✅ Events fire correctly (`Transfer`, `NagusFeeCollected`, `LocalMint`)
+- ✅ Math is accurate (500,000:1 ratio, 0.25% deducted)
+
+## 🧠 Architecture Summary
+- **Base Sepolia** = Hub chain (tracks global $1M hard cap)
+- **GPL = LayerZero OFT** – ready for omnichain expansion
+- **Planned spokes**: Solana (Anchor program ready), Ethereum, Polygon
+- **NagusVault** = Protocol-owned safety buffer (for IL, de-peg, arbitrage)
+
+## 📦 Frontend
+- Next.js app with ConnectKit
+- Manual approve + mint works in Remix
+- UI needs update to match current contract addresses
+
+## 🚧 Next Up
+1. Update frontend to work with deployed contracts
+2. Begin Solana integration (Anchor program from `DEVELOPMENT_LOG.md`)
+3. Set up LayerZero peer connections for cross-chain minting
+4. Deploy to more testnets (Ethereum Sepolia, Polygon Amoy)
+
+---
+
+Save this wherever you need it. The full picture is now captured!

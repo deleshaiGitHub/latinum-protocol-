@@ -11,3 +11,55 @@ Anchor Version: v0.32.1
 Fixes Applied: blake3 pinned to =1.8.2, InterfaceAccount reverted to Account for 0.32.1 stability.
 🧠 Why this helps:
 If I (or DeepSeek) ever lose the thread, we can just "read" that file and instantly know exactly which accounts are live on-chain. It prevents us from accidentally "double-initializing" and wasting your Devnet SOL.
+-------------------------------------
+SNAPSHOT.....
+# 1. Create a snapshot branch
+git checkout -b solana-v2-working-state
+
+# 2. Save all critical files we know are working:
+# - lib.rs (current v2 version with both treasuries as token accounts)
+# - initialize.ts (with v2 seeds)
+# - testMint.ts (with v2 seeds)
+# - Anchor.toml
+# - Cargo.toml
+
+# 3. Commit with clear message
+git add .
+git commit -m "Solana v2 working state - Treasuries initialized, peer set, mint ready"
+git push origin solana-v2-working-state
+
+# Solana Protocol - Working State Snapshot
+
+## Deployment (Devnet)
+- Program ID: `DbY627K1p6y1eXGqXe4UTm7o8aWMywu2RPZ1Vm5nTfqW`
+- Last Initialization Tx: `4JAuSWG7kZssjsUbJBXX5T6foepDi4K3uvD44CfqYTQFce8wWFrjhGdTc25HRr6M7tEe6xTA21vf5vF49DS3XMyM`
+
+## PDAs (v2 Seeds)
+- Solana Treasury: `BhtqxBtx8xr9LJeKAqg6BgArtM7pgi9eE4CyjTBsC3EU`
+- Nagus Vault: `4WbCjn4ade51zdaLJirs5uob1UhGQMZxLtsecA4sA8Cy`
+
+## Base Sepolia
+- Hub: `0x41ab2B71D5d4E6b68eeBd1BA2272eD50D436f105`
+- Peer Set Tx: `0x8f6bf3bf5e4478467981268552e34fcfbf18be8526df2568497a78dbfd9a10a2`
+- Solana Peer (bytes32): `0x0000000000000000000000004462593632374b31703679316558477158653455`
+
+## Current Status
+✅ Program deployed and initialized  
+✅ Base peer configured  
+✅ USDC available (20 in wallet)  
+✅ Treasuries are proper token accounts  
+❌ Mint fails: `nagus_vault` needs to be token account for fees  
+
+## Next Fix Required
+In `lib.rs`, change `nagus_vault` in Initialize from `AccountInfo` to:
+```rust
+#[account(
+    init,
+    payer = user,
+    token::mint = usdc_mint,
+    token::authority = nagus_vault,
+    seeds = [b"nagus_vault_solana_v2"],
+    bump
+)]
+pub nagus_vault: Account<'info, TokenAccount>,
+```

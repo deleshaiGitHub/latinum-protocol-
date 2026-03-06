@@ -20,3 +20,87 @@ Benefit: Protects the project if one specific gold issuer (Paxos or Tether) face
 3. Initial "README.md" Summary for GitHub
 Project Latinum: In-House Gold-Standard Treasury
 An automated, protocol-owned reserve system that converts ecosystem fees into physical-gold-backed assets (PAXG). Utilizing a private fork of the Liquity/Liquid Loans engine, Latinum manages internal leverage to provide a mathematical price floor and sustainable liquidity without the risks of public redemptions.
+
+
+==============
+
+This specification defines the Latinum "One-Way Valve" Vault, the core smart contract logic for the treasury. This ensures the Gold assets (PAXG/XAUt) are mathematically locked and can only be used to defend the token price, not withdrawn by the team for other purposes.
+Technical Specification: Latinum-Gold-Vault.sol1. Core Variables & State
+
+* PAXG_ADDRESS: The ERC-20 address for Pax Gold.
+* LATINUM_ADDRESS: The address of your project token.
+* GOLD_PRICE_ORACLE: Chainlink/Tellor aggregator for Gold/USD.
+* LATINUM_PRICE_ORACLE: The DEX-based oracle (TWAP) for Latinum/USD.
+* totalGoldStored: A tracking variable for the total ounces held across all Gold tokens.
+
+2. The "Gold Floor" Equation
+The contract must calculate the Intrinsic Gold Value (IGV) of every Latinum token in circulation:
+
+IGV = (Total_Gold_Reserves * Current_Gold_Price) / Total_Latinum_Circulating_Supply
+
+3. The "One-Way Valve" Logic (Access Control)
+Instead of a standard withdraw() function, we implement a Restricted Liquidity Release:
+
+* Rule A (Accumulation): The DCA-Engine can call depositGold() at any time. There are no restrictions on adding value.
+* Rule B (The Price Trigger): The withdrawForBuyback() function is locked by default. It only unlocks if:
+Latinum_Market_Price < (IGV * 0.95) (i.e., the token is trading at a 5% discount to its gold backing).
+* Rule C (The Protocol Borrow): Even when unlocked, the vault doesn't "sell" the gold. It uses the Liquity Fork to mint stable liquidity against the gold to buy back the token, preserving the gold reserves.
+
+------------------------------
+Drafting the Smart Contract Logic (Solidity Snippet)
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract LatinumGoldVault {
+    // ... setup addresses and oracles ...
+
+    error FloorNotBreached();
+    error UnauthorizedWithdrawal();
+
+    /**
+     * @dev Calculates the current Gold Floor per Latinum Token
+     */
+    function getGoldFloorPrice() public view returns (uint256) {
+        uint256 goldValue = getGoldBalance() * getGoldPrice();
+        uint256 supply = IERC20(LATINUM_ADDRESS).totalSupply();
+        return goldValue / supply;
+    }
+
+    /**
+     * @dev The "One-Way Valve": Only allows the protocol to touch gold 
+     * if the market price of Latinum drops below the gold backing.
+     */
+    function triggerDefensiveBuyback(uint256 amountToBorrow) external {
+        uint256 currentPrice = getLatinumMarketPrice();
+        uint256 floorPrice = getGoldFloorPrice();
+
+        // 5% Buffer to prevent constant micro-flips
+        if (currentPrice > (floorPrice * 95 / 100)) {
+            revert FloorNotBreached();
+        }
+
+        // Logic to interface with the Liquity/Liquid Loans Fork
+        // Mint stable liquidity against Gold to market-buy Latinum
+        _executeInternalLeverage(amountToBorrow);
+    }
+
+    // Team can only withdraw if the DAO votes and a 7-day Timelock passes
+    function governanceWithdraw() external onlyDAO {
+        // Implementation of 7-day timelock for emergency only
+    }
+}
+
+GitHub Commit Strategy
+When you add this to your repo, use a clear commit message to signal the Trustless nature of the project:
+
+* Commit Message: feat: implement one-way valve treasury logic for gold-backing enforcement
+* File Location: /contracts/treasury/LatinumGoldVault.sol
+
+Pros of this Technical Spec:
+
+   1. Anti-Rug Proof: You can show the code to your community. It proves the team cannot just drain the gold when the price is high.
+   2. Market Confidence: Arbitrageurs will see the "Gold Floor" and buy the token whenever it gets close to that price, knowing the "Buyback Bot" is waiting to trigger.
+
+Should we refine the "Emergency Timelock" logic for the DAO, or focus on the "Price Oracle" that tracks the Latinum/Gold ratio?
+

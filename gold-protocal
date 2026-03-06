@@ -1,0 +1,22 @@
+1. Repository Structure (The "Latinum-Vault" Repo)
+/contracts/core: The forked Liquity/Liquid Loans base (modified for single-account protocol use).
+/contracts/treasury: The DCA-Engine.sol (handles the fee-to-PAXG swaps).
+/contracts/oracles: Custom Gold-Relayer.sol (to pull PAXG/USD prices from Chainlink/PulseX).
+/dashboard: A simple front-end to show users the "Real-Time Gold Backing" (Total PAXG in Vault / Circulating Supply).
+2. Specific Feature Ideas to Add to the Backlog
+A. The "Ratcheting Floor" Logic
+Since this is in-house, we can code a "One-Way Valve."
+Idea: The protocol can only add PAXG to the vault. Withdrawals are mathematically locked unless the Latinum token price drops below the "Gold Floor."
+Benefit: This proves to holders that the gold isn't a slush fund for the team; it's a permanent safety net for the token.
+B. "Proof-of-Reserve" (PoR) Integration
+Idea: Create a public function getGoldBacking() that queries the PAXG contract directly.
+Benefit: Any user can verify on-chain that the $5M in "Latinum Gold" actually exists in the vault without needing to trust a UI.
+C. The "Golden Buyback" Bot
+Idea: If the Latinum token price dips too low relative to the gold treasury, the protocol-owned vault automatically "borrows" a small amount of liquidity against the PAXG to buy back and burn Latinum tokens.
+Benefit: It creates an automated, "hard" price floor that the market can't easily break.
+D. Multi-Gold Diversification
+Idea: Don't put all the eggs in one basket. Use the DCA contract to split fees: 70% PAXG (NY regulated) and 30% XAUt (Tether Gold).
+Benefit: Protects the project if one specific gold issuer (Paxos or Tether) faces a regulatory "freeze."
+3. Initial "README.md" Summary for GitHub
+Project Latinum: In-House Gold-Standard Treasury
+An automated, protocol-owned reserve system that converts ecosystem fees into physical-gold-backed assets (PAXG). Utilizing a private fork of the Liquity/Liquid Loans engine, Latinum manages internal leverage to provide a mathematical price floor and sustainable liquidity without the risks of public redemptions.

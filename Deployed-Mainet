@@ -1,0 +1,313 @@
+Perfect! While we wait for Ethereum, here's a comprehensive developer reference for all your contracts.
+
+# GPL Protocol - Complete Developer Reference
+
+## Contract Addresses (Mainnet)
+
+| Contract | Chain | Address |
+|----------|-------|---------|
+| **GPL Token** | Base | `0x5F78198E18F14A7F2957911160e97BE679f64940` |
+| **Vesting Locker** | Base | `0xB7E142cC4bB0bbB1da98fBeaa94c08D9cC4101c2` |
+| **Fee Vault** | Base | `0x521ea5D828F411AEBcAAefb6Ce394161Bf82090d` |
+| **Minting Hub** | Base | `0xE02bdeE67b1a319C771345f37123C66403AC1A9b` |
+| **GPL Token** | BNB | `0x521ea5D828F411AEBcAAefb6Ce394161Bf82090d` |
+| **GPL Token** | ETH | *Pending* |
+
+---
+
+## 1. GoldPressedLatinum (GPL Token)
+
+### Core Features
+- **OFTv2 Standard**: Cross-chain compatible with LayerZero
+- **Supply Cap**: 500,000,000,000 (500B) tokens
+- **Decimals**: 18 (standard ERC20)
+- **Transfer Lock**: Timestamp-based, owner-adjustable
+- **Genesis Bypass**: Genesis wallet can always transfer
+
+### Key Functions
+
+#### For Users
+```solidity
+// Check balance
+function balanceOf(address account) view returns (uint256)
+
+// Transfer tokens (fails during lock)
+function transfer(address to, uint256 amount) returns (bool)
+
+// Approve spending
+function approve(address spender, uint256 amount) returns (bool)
+
+// Burn your own tokens
+function burn(uint256 amount)
+
+// Check if transfers are locked
+function isTransfersLocked() view returns (bool)
+```
+
+#### For Bridge Operations
+```solidity
+// Send tokens cross-chain
+function send(
+    SendParam calldata _sendParam,
+    MessagingFee calldata _fee,
+    address _refundAddress
+) payable returns (MessagingReceipt memory msgReceipt, OFTReceipt memory oftReceipt)
+
+// Quote cross-chain fee
+function quoteSend(
+    SendParam calldata _sendParam,
+    bool _payInLzToken
+) view returns (MessagingFee memory)
+```
+
+#### For Owner (Multisig)
+```solidity
+// Set hub address (one-time)
+function setHub(address _hub)
+
+// Set/unlock transfer lock
+function setLockUntil(uint256 _newLockUntil)
+
+// Permanently disable minting
+function finalizeMinting()
+
+// Emergency pause
+function pause()
+function unpause()
+
+// Set cross-chain peer
+function setPeer(uint32 _eid, bytes32 _peer)
+```
+
+---
+
+## 2. LatinumPressHub (Mint Coordinator)
+
+### Mint Phase Parameters
+- **USDC Goal**: 1,000,000 USDC
+- **Mint Rate**: 1 USDC = 10 GPL
+- **Fee**: 0.25% (goes to FeeVault)
+- **Min Mint**: 1 USDC
+
+### Key Functions
+
+#### For Users
+```solidity
+// Mint GPL with USDC
+function mint(uint256 _amountUSDC)
+
+// Check remaining cap
+function remainingCap() view returns (uint256)
+
+// Get mint progress
+function getMintProgress() view returns (
+    uint256 currentUSDC,
+    uint256 goalUSDC,
+    bool goalReached,
+    bool vestingStarted
+)
+```
+
+#### For Owner
+```solidity
+// End mint phase, start vesting
+function finalizeMint()
+
+// Set addresses (one-time each)
+function setGPLToken(address _gplToken)
+function setLocker(address _locker)
+function setFeeVault(address _feeVault)
+function setLPWallet(address _lpWallet)
+
+// Emergency controls
+function pause()
+function unpause()
+```
+
+---
+
+## 3. VestingLocker
+
+### Vesting Schedule
+- **33% Immediate** (after goal reached)
+- **67% Linear** over 180 days (6 months)
+- **Vesting starts**: When `finalizeMint()` is called on hub
+
+### Key Functions
+
+#### For Users
+```solidity
+// Claim vested tokens
+function claim()
+
+// Check claimable amount
+function getClaimable(address user) view returns (uint256)
+
+// Get full user info
+function getUserInfo(address user) view returns (
+    uint256 totalLocked,
+    uint256 claimed,
+    uint256 claimable,
+    uint256 vestingStart,
+    uint256 vestingEnd,
+    bool isVestingActive
+)
+
+// Check vesting progress
+function vestingProgress() view returns (uint256 percentage)
+```
+
+#### For Owner
+```solidity
+// Start vesting (called by hub)
+function startVesting()
+
+// Batch claim for users (gas optimization)
+function batchClaim(address[] calldata users)
+
+// Emergency controls
+function triggerEmergency()
+function disableEmergency()
+function pause()
+function unpause()
+```
+
+---
+
+## 4. FeeVault
+
+### Purpose
+- Collects 0.25% USDC fees from minting
+- Funds allocated to approved projects
+
+### Key Functions
+
+#### For Owner
+```solidity
+// Approve projects to receive funds
+function approveProject(address _project)
+function revokeProject(address _project)
+
+// Allocate funds to approved project
+function allocateFunds(
+    address _project,
+    uint256 _amount,
+    string calldata _purpose
+)
+
+// Emergency rescue of stuck tokens
+function rescueERC20(address token, address to, uint256 amount)
+```
+
+#### View Functions
+```solidity
+// Check vault balance
+function balance() view returns (uint256)
+
+// Check project status
+function getProjectInfo(address _project) view returns (
+    bool isApproved,
+    uint256 allocated
+)
+```
+
+---
+
+## Cross-Chain Configuration
+
+### Endpoint IDs (EIDs)
+| Chain | EID | LayerZero Endpoint |
+|-------|-----|-------------------|
+| Base | 30184 | `0x1a44076050125825900e736c501f859c50fE728c` |
+| Ethereum | 30101 | `0x1a44076050125825900e736c501f859c50fE728c` |
+| BNB | 30102 | `0x1a44076050125825900e736c501f859c50fE728c` |
+
+### Setting Peers (Manual)
+```solidity
+// On Base GPL - trust BNB GPL
+setPeer(30102, 0x000000000000000000000000521ea5D828F411AEBcAAefb6Ce394161Bf82090d)
+
+// On BNB GPL - trust Base GPL  
+setPeer(30184, 0x0000000000000000000000005F78198E18F14A7F2957911160e97BE679f64940)
+
+// On ETH GPL (after deploy) - trust Base GPL
+setPeer(30184, 0x0000000000000000000000005F78198E18F14A7F2957911160e97BE679f64940)
+```
+
+---
+
+## Events (For Frontend)
+
+### GPL Token
+```solidity
+event Transfer(address indexed from, address indexed to, uint256 value)
+event Approval(address indexed owner, address indexed spender, uint256 value)
+event HubSet(address indexed hub)
+event MintingFinalized(uint256 timestamp)
+event LockPeriodUpdated(uint256 oldLockUntil, uint256 newLockUntil)
+```
+
+### Minting Hub
+```solidity
+event Minted(
+    address indexed user,
+    uint256 usdcPaid,
+    uint256 usdcForLP,
+    uint256 usdcFee,
+    uint256 gplMinted
+)
+event GoalReached(uint256 totalUSDC)
+event MintFinalized(uint256 usdcSentToLP)
+```
+
+### Vesting Locker
+```solidity
+event TokensLocked(address indexed user, uint256 amount)
+event Claimed(address indexed user, uint256 amount, uint256 timestamp)
+event BatchClaimed(uint256 userCount, uint256 totalAmount)
+event VestingStarted(uint256 startTime)
+```
+
+---
+
+## Error Codes (For Debugging)
+
+| Error | Contract | Meaning |
+|-------|----------|---------|
+| `ExceedsMaxSupply()` | GPL | Can't mint more than 500B |
+| `OnlyHub()` | GPL | Only hub can call this function |
+| `HubAlreadySet()` | GPL | Hub can only be set once |
+| `TransfersLocked()` | GPL | Transfer lock is active |
+| `GoalAlreadyReached()` | Hub | Minting goal already hit |
+| `NoTokensToClaim()` | Locker | User has no claimable tokens |
+| `VestingNotStarted()` | Locker | Vesting hasn't begun yet |
+| `NotApproved()` | FeeVault | Project not approved to receive funds |
+
+---
+
+## Quick Reference: Common Tasks
+
+### For Users
+1. **Mint**: Approve USDC → call `mint()` on hub
+2. **Check vesting**: `getUserInfo()` on locker
+3. **Claim**: `claim()` on locker
+4. **Bridge**: `send()` on GPL
+
+### For Owner
+1. **Start mint**: Deploy hub, set LP wallet
+2. **End mint**: Call `finalizeMint()` when goal reached
+3. **Manage fees**: `allocateFunds()` on fee vault
+4. **Adjust lock**: `setLockUntil()` on GPL
+5. **Emergency**: `pause()` on any contract
+
+### Gas Estimates
+| Action | Gas Cost | Est. USD (Base) |
+|--------|----------|-----------------|
+| Mint | 150-200k | ~$0.50 |
+| Claim | 80-100k | ~$0.30 |
+| Bridge | 200-300k | ~$0.80 |
+| Approve USDC | 45k | ~$0.15 |
+
+---
+
+**Ethereum deployment done yet?** Let me know when it confirms and I'll help you set the peers!

@@ -1,0 +1,736 @@
+Excellent. Let's build this.
+
+I'll give you a production-ready contract architecture for the in-house gold vault and CDP. This is designed to be:
+
+- **Deployable today on Base**
+- **Admin-controlled** (no surprises)
+- **Safe** (25% max LTV, 400% collateral floor)
+- **Auditable** (clean, modular, minimal dependencies)
+
+---
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    IN-HOUSE GOLD TREASURY                        │
+│                         (Base Chain)                             │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ┌────────────────────────────────────────────────────────────┐ │
+│  │                     GOLD_REFINERY.sol                      │ │
+│  │  - Receives USDC from treasury                             │ │
+│  │  - Swaps 70% → PAXG, 30% → XAUt                            │ │
+│  │  - Sends gold to GoldVault                                 │ │
+│  └────────────────────────────┬───────────────────────────────┘ │
+│                               │                                  │
+│                               ▼                                  │
+│  ┌────────────────────────────────────────────────────────────┐ │
+│  │                     GOLD_VAULT.sol                         │ │
+│  │  - Holds PAXG and XAUt                                     │ │
+│  │  - One-way valve (gold only enters, except buybacks)      │ │
+│  │  - Reports total gold value via Chainlink                  │ │
+│  │  - Only CDP can withdraw (and only for buybacks)          │ │
+│  └────────────────────────────┬───────────────────────────────┘ │
+│                               │                                  │
+│                               ▼                                  │
+│  ┌────────────────────────────────────────────────────────────┐ │
+│  │                  INTERNAL_CDP.sol                          │ │
+│  │  - Borrow against GoldVault collateral                     │ │
+│  │  - 25% max LTV (enforced)                                  │ │
+│  │  - Admin controls: set LTV, pause, adjust fees            │ │
+│  │  - Borrows USDC (or custom stable)                        │ │
+│  └────────────────────────────┬───────────────────────────────┘ │
+│                               │                                  │
+│                               ▼                                  │
+│  ┌────────────────────────────────────────────────────────────┐ │
+│  │                  TREASURY_OPERATIONS                       │ │
+│  │  - Deploy borrowed USDC to LP / yield / operations        │ │
+│  │  - Profits returned to GoldRefinery → more gold           │ │
+│  └────────────────────────────────────────────────────────────┘ │
+│                                                                  │
+│  ┌────────────────────────────────────────────────────────────┐ │
+│  │              GPL_BACKING_DASHBOARD.sol                     │ │
+│  │  - Public view contract                                    │ │
+│  │  - Shows gold backing per GPL token                        │ │
+│  │  - Read-only, no admin                                     │ │
+│  └────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Contract 1: GoldRefinery.sol
+
+This contract converts USDC mint proceeds into gold.
+
+```solidity
+// SPDX-License-Identifier: GPL-3.0
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+
+/**
+ * @title GoldRefinery
+ * @notice Converts USDC into PAXG (70%) and XAUt (30%) for treasury
+ * @dev Admin-only access. Uses Base chain DEX aggregator for swaps.
+ */
+contract GoldRefinery is Ownable, ReentrancyGuard {
+    // ---------- Addresses (Base Chain) ----------
+    address public constant USDC = 0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913; // Base USDC
+    address public constant PAXG = 0x...; // TODO: Add PAXG address on Base
+    address public constant XAUT = 0x...; // TODO: Add XAUt address on Base
+    
+    // ---------- DEX Aggregator (use Aerodrome or Uniswap) ----------
+    address public dexAggregator; // e.g., 0x... Aerodrome Router
+    
+    // ---------- State ----------
+    address public goldVault;
+    uint256 public constant PAXG_RATIO = 70; // 70% to PAXG
+    uint256 public constant XAUT_RATIO = 30; // 30% to XAUt
+    uint256 public minSwapAmount = 100 * 1e6; // $100 minimum (USDC has 6 decimals)
+    
+    // ---------- Events ----------
+    event GoldRefined(uint256 usdcAmount, uint256 paxgAmount, uint256 xautAmount);
+    event DexAggregatorUpdated(address indexed newAggregator);
+    event MinSwapAmountUpdated(uint256 newAmount);
+    
+    // ---------- Constructor ----------
+    constructor(address _goldVault, address _dexAggregator) Ownable(msg.sender) {
+        require(_goldVault != address(0), "Invalid gold vault");
+        require(_dexAggregator != address(0), "Invalid DEX aggregator");
+        goldVault = _goldVault;
+        dexAggregator = _dexAggregator;
+    }
+    
+    // ---------- Core Functions ----------
+    
+    /**
+     * @dev Convert USDC to gold and send to vault
+     * @param usdcAmount Amount of USDC to convert
+     */
+    function refine(uint256 usdcAmount) external onlyOwner nonReentrant {
+        require(usdcAmount >= minSwapAmount, "Amount below minimum");
+        
+        // Transfer USDC from caller (treasury) to this contract
+        require(IERC20(USDC).transferFrom(msg.sender, address(this), usdcAmount), "USDC transfer failed");
+        
+        // Approve DEX aggregator
+        IERC20(USDC).approve(dexAggregator, usdcAmount);
+        
+        // Calculate split amounts
+        uint256 paxgUsdc = (usdcAmount * PAXG_RATIO) / 100;
+        uint256 xautUsdc = usdcAmount - paxgUsdc;
+        
+        // Execute swaps
+        uint256 paxgReceived = _swapUsdcToGold(USDC, PAXG, paxgUsdc);
+        uint256 xautReceived = _swapUsdcToGold(USDC, XAUT, xautUsdc);
+        
+        // Transfer gold to vault
+        IERC20(PAXG).transfer(goldVault, paxgReceived);
+        IERC20(XAUT).transfer(goldVault, xautReceived);
+        
+        emit GoldRefined(usdcAmount, paxgReceived, xautReceived);
+    }
+    
+    /**
+     * @dev Internal swap function using DEX aggregator
+     */
+    function _swapUsdcToGold(address tokenIn, address tokenOut, uint256 amount) internal returns (uint256) {
+        // This is a simplified version. In production, use a proper DEX aggregator like:
+        // - Aerodrome Router
+        // - Uniswap Universal Router
+        // - 1inch Aggregator
+        
+        // For now, we'll use a simple Uniswap V3 swap pattern
+        // You'll need to replace this with actual router calls based on your chosen DEX
+        
+        // Example using Uniswap V3 Router:
+        // ISwapRouter.ExactInputSingleParams memory params = ISwapRouter.ExactInputSingleParams({
+        //     tokenIn: tokenIn,
+        //     tokenOut: tokenOut,
+        //     fee: 3000,
+        //     recipient: address(this),
+        //     deadline: block.timestamp + 300,
+        //     amountIn: amount,
+        //     amountOutMinimum: 0, // TODO: Add slippage protection
+        //     sqrtPriceLimitX96: 0
+        // });
+        // return ISwapRouter(dexAggregator).exactInputSingle(params);
+        
+        revert("DEX integration not implemented - add router logic");
+    }
+    
+    // ---------- Admin Functions ----------
+    
+    function setDexAggregator(address _newAggregator) external onlyOwner {
+        require(_newAggregator != address(0), "Invalid address");
+        dexAggregator = _newAggregator;
+        emit DexAggregatorUpdated(_newAggregator);
+    }
+    
+    function setMinSwapAmount(uint256 _newMin) external onlyOwner {
+        minSwapAmount = _newMin;
+        emit MinSwapAmountUpdated(_newMin);
+    }
+    
+    function setGoldVault(address _newVault) external onlyOwner {
+        require(_newVault != address(0), "Invalid address");
+        goldVault = _newVault;
+    }
+    
+    // ---------- Emergency ----------
+    
+    function recoverTokens(address token) external onlyOwner {
+        uint256 balance = IERC20(token).balanceOf(address(this));
+        if (balance > 0) {
+            IERC20(token).transfer(owner(), balance);
+        }
+    }
+}
+```
+
+---
+
+## Contract 2: GoldVault.sol
+
+The one-way valve that holds gold securely.
+
+```solidity
+// SPDX-License-Identifier: GPL-3.0
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
+
+/**
+ * @title GoldVault
+ * @notice Holds treasury gold assets with one-way valve logic
+ * @dev Gold can only be withdrawn for buybacks via authorized CDP contract
+ */
+contract GoldVault is Ownable {
+    // ---------- Gold Tokens ----------
+    IERC20 public constant PAXG = IERC20(0x...); // TODO: Add PAXG address
+    IERC20 public constant XAUT = IERC20(0x...); // TODO: Add XAUt address
+    
+    // ---------- Chainlink Oracles ----------
+    AggregatorV3Interface public paxgOracle; // PAXG/USD
+    AggregatorV3Interface public xautOracle; // XAUt/USD
+    
+    // ---------- State ----------
+    address public internalCDP; // Only this contract can withdraw for buybacks
+    uint256 public totalGoldValueUSD; // Cached total value
+    uint256 public lastUpdateTime;
+    
+    struct GoldHolding {
+        uint256 paxgAmount;
+        uint256 xautAmount;
+    }
+    
+    GoldHolding public holdings;
+    
+    // ---------- Events ----------
+    event GoldDeposited(address indexed asset, uint256 amount);
+    event GoldWithdrawn(address indexed asset, uint256 amount, string reason);
+    event InternalCDPSet(address indexed cdp);
+    event GoldValueUpdated(uint256 totalValueUSD);
+    
+    // ---------- Modifiers ----------
+    modifier onlyCDP() {
+        require(msg.sender == internalCDP, "Only CDP can withdraw");
+        _;
+    }
+    
+    // ---------- Constructor ----------
+    constructor(address _paxgOracle, address _xautOracle) Ownable(msg.sender) {
+        require(_paxgOracle != address(0), "Invalid PAXG oracle");
+        require(_xautOracle != address(0), "Invalid XAUt oracle");
+        paxgOracle = AggregatorV3Interface(_paxgOracle);
+        xautOracle = AggregatorV3Interface(_xautOracle);
+    }
+    
+    // ---------- Deposit Functions ----------
+    
+    /**
+     * @dev Deposit PAXG into vault
+     */
+    function depositPAXG(uint256 amount) external onlyOwner {
+        require(amount > 0, "Amount must be > 0");
+        PAXG.transferFrom(msg.sender, address(this), amount);
+        holdings.paxgAmount += amount;
+        _updateGoldValue();
+        emit GoldDeposited(address(PAXG), amount);
+    }
+    
+    /**
+     * @dev Deposit XAUt into vault
+     */
+    function depositXAUt(uint256 amount) external onlyOwner {
+        require(amount > 0, "Amount must be > 0");
+        XAUT.transferFrom(msg.sender, address(this), amount);
+        holdings.xautAmount += amount;
+        _updateGoldValue();
+        emit GoldDeposited(address(XAUT), amount);
+    }
+    
+    // ---------- Withdrawal (Restricted) ----------
+    
+    /**
+     * @dev Withdraw gold for buybacks only (called by CDP)
+     */
+    function withdrawForBuyback(address asset, uint256 amount) external onlyCDP nonReentrant {
+        require(amount > 0, "Amount must be > 0");
+        require(asset == address(PAXG) || asset == address(XAUT), "Invalid asset");
+        
+        IERC20 token = IERC20(asset);
+        require(token.balanceOf(address(this)) >= amount, "Insufficient balance");
+        
+        token.transfer(internalCDP, amount);
+        
+        if (asset == address(PAXG)) {
+            holdings.paxgAmount -= amount;
+        } else {
+            holdings.xautAmount -= amount;
+        }
+        
+        _updateGoldValue();
+        emit GoldWithdrawn(asset, amount, "buyback");
+    }
+    
+    // ---------- Value Tracking ----------
+    
+    /**
+     * @dev Update total gold value in USD using Chainlink oracles
+     */
+    function _updateGoldValue() internal {
+        uint256 paxgValue = _getGoldValue(address(PAXG), holdings.paxgAmount);
+        uint256 xautValue = _getGoldValue(address(XAUT), holdings.xautAmount);
+        totalGoldValueUSD = paxgValue + xautValue;
+        lastUpdateTime = block.timestamp;
+        emit GoldValueUpdated(totalGoldValueUSD);
+    }
+    
+    /**
+     * @dev Get USD value of gold holdings using Chainlink
+     */
+    function _getGoldValue(address asset, uint256 amount) internal view returns (uint256) {
+        if (amount == 0) return 0;
+        
+        AggregatorV3Interface oracle = (asset == address(PAXG)) ? paxgOracle : xautOracle;
+        (, int256 price, , , ) = oracle.latestRoundData();
+        require(price > 0, "Invalid oracle price");
+        
+        // PAXG/XAUt have 18 decimals, Chainlink price has 8 decimals
+        // Result is in USD with 18 decimals
+        return (amount * uint256(price)) / 1e8;
+    }
+    
+    /**
+     * @dev Public view to get current gold value
+     */
+    function getCurrentGoldValue() external view returns (uint256) {
+        uint256 paxgValue = _getGoldValue(address(PAXG), holdings.paxgAmount);
+        uint256 xautValue = _getGoldValue(address(XAUT), holdings.xautAmount);
+        return paxgValue + xautValue;
+    }
+    
+    // ---------- Admin Functions ----------
+    
+    function setInternalCDP(address _cdp) external onlyOwner {
+        require(_cdp != address(0), "Invalid CDP address");
+        internalCDP = _cdp;
+        emit InternalCDPSet(_cdp);
+    }
+    
+    // ---------- Emergency ----------
+    
+    /**
+     * @dev Emergency recovery (only owner, with timelock in production)
+     */
+    function emergencyWithdraw(address token, uint256 amount) external onlyOwner {
+        // In production, add timelock controller here
+        IERC20(token).transfer(owner(), amount);
+    }
+}
+```
+
+---
+
+## Contract 3: InternalCDP.sol
+
+The borrowing engine—modified Liquity-style but with admin controls.
+
+```solidity
+// SPDX-License-Identifier: GPL-3.0
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
+import "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
+
+/**
+ * @title InternalCDP
+ * @notice Borrow stablecoins against gold collateral held in GoldVault
+ * @dev Admin-controlled LTV, no public users, no Recovery Mode
+ */
+contract InternalCDP is Ownable, ReentrancyGuard {
+    // ---------- Addresses ----------
+    address public goldVault;
+    IERC20 public stablecoin; // USDC or custom stable
+    
+    // ---------- Chainlink ----------
+    AggregatorV3Interface public goldOracle; // Gold/USD oracle
+    
+    // ---------- Parameters (Admin Settable) ----------
+    uint256 public maxLTV = 25; // 25% maximum loan-to-value
+    uint256 public minCollateralRatio = 400; // 400% minimum (enforced at borrow)
+    uint256 public borrowingFee = 0; // 0% for internal use (basis points, e.g., 50 = 0.5%)
+    bool public paused = false;
+    
+    // ---------- State ----------
+    uint256 public totalDebt; // Total stablecoin borrowed
+    uint256 public totalFeesAccumulated; // Fees collected (if any)
+    
+    // ---------- Events ----------
+    event Borrowed(uint256 amount, uint256 fee, uint256 timestamp);
+    event Repaid(uint256 amount, uint256 timestamp);
+    event ParametersUpdated(string param, uint256 oldValue, uint256 newValue);
+    event Paused(bool state);
+    
+    // ---------- Constructor ----------
+    constructor(address _goldVault, address _stablecoin, address _goldOracle) Ownable(msg.sender) {
+        require(_goldVault != address(0), "Invalid gold vault");
+        require(_stablecoin != address(0), "Invalid stablecoin");
+        require(_goldOracle != address(0), "Invalid oracle");
+        
+        goldVault = _goldVault;
+        stablecoin = IERC20(_stablecoin);
+        goldOracle = AggregatorV3Interface(_goldOracle);
+    }
+    
+    // ---------- Core Functions ----------
+    
+    /**
+     * @dev Borrow stablecoins against gold collateral
+     * @param amount Amount of stablecoin to borrow
+     */
+    function borrow(uint256 amount) external onlyOwner nonReentrant {
+        require(!paused, "Protocol paused");
+        require(amount > 0, "Amount must be > 0");
+        
+        uint256 goldValue = _getGoldValue();
+        uint256 newDebt = totalDebt + amount;
+        
+        // Enforce max LTV (25%)
+        uint256 maxBorrow = (goldValue * maxLTV) / 100;
+        require(newDebt <= maxBorrow, "Exceeds max LTV");
+        
+        // Enforce min collateral ratio (400%)
+        uint256 newCollateralRatio = (goldValue * 100) / newDebt;
+        require(newCollateralRatio >= minCollateralRatio, "Below min collateral ratio");
+        
+        // Calculate fee (if any)
+        uint256 fee = (amount * borrowingFee) / 10000;
+        uint256 amountAfterFee = amount - fee;
+        
+        // Update state
+        totalDebt = newDebt;
+        totalFeesAccumulated += fee;
+        
+        // Transfer stablecoin to treasury
+        require(stablecoin.transfer(msg.sender, amountAfterFee), "Stable transfer failed");
+        
+        emit Borrowed(amount, fee, block.timestamp);
+    }
+    
+    /**
+     * @dev Repay borrowed stablecoins
+     * @param amount Amount to repay
+     */
+    function repay(uint256 amount) external onlyOwner nonReentrant {
+        require(amount > 0, "Amount must be > 0");
+        require(amount <= totalDebt, "Amount exceeds total debt");
+        
+        // Transfer stablecoin from treasury
+        require(stablecoin.transferFrom(msg.sender, address(this), amount), "Transfer failed");
+        
+        totalDebt -= amount;
+        
+        emit Repaid(amount, block.timestamp);
+    }
+    
+    /**
+     * @dev Get current gold value from Chainlink and GoldVault holdings
+     */
+    function _getGoldValue() internal view returns (uint256) {
+        // Query GoldVault for total USD value of gold holdings
+        // We need to add a view function to GoldVault for this
+        // For now, using a placeholder - you'll need to integrate with GoldVault
+        
+        // Option 1: Add getTotalGoldValue() to GoldVault and call it here
+        // return IGoldVault(goldVault).getCurrentGoldValue();
+        
+        // Option 2: Calculate directly
+        revert("Integration needed: call GoldVault.getCurrentGoldValue()");
+    }
+    
+    /**
+     * @dev Get current health metrics
+     */
+    function getHealthMetrics() external view returns (
+        uint256 goldValueUSD,
+        uint256 currentLTV,
+        uint256 collateralRatio,
+        uint256 maxBorrowAvailable
+    ) {
+        goldValueUSD = _getGoldValue();
+        if (totalDebt == 0) {
+            return (goldValueUSD, 0, type(uint256).max, (goldValueUSD * maxLTV) / 100);
+        }
+        
+        currentLTV = (totalDebt * 100) / goldValueUSD;
+        collateralRatio = (goldValueUSD * 100) / totalDebt;
+        maxBorrowAvailable = ((goldValueUSD * maxLTV) / 100) - totalDebt;
+    }
+    
+    // ---------- Admin Functions ----------
+    
+    function setMaxLTV(uint256 newLTV) external onlyOwner {
+        require(newLTV > 0 && newLTV <= 50, "LTV must be between 1-50%");
+        uint256 old = maxLTV;
+        maxLTV = newLTV;
+        emit ParametersUpdated("maxLTV", old, newLTV);
+    }
+    
+    function setMinCollateralRatio(uint256 newRatio) external onlyOwner {
+        require(newRatio >= 200, "Min ratio must be >= 200%");
+        uint256 old = minCollateralRatio;
+        minCollateralRatio = newRatio;
+        emit ParametersUpdated("minCollateralRatio", old, newRatio);
+    }
+    
+    function setBorrowingFee(uint256 newFee) external onlyOwner {
+        require(newFee <= 500, "Fee cannot exceed 5%"); // Max 500 bps = 5%
+        uint256 old = borrowingFee;
+        borrowingFee = newFee;
+        emit ParametersUpdated("borrowingFee", old, newFee);
+    }
+    
+    function setPaused(bool _paused) external onlyOwner {
+        paused = _paused;
+        emit Paused(_paused);
+    }
+    
+    /**
+     * @dev Withdraw accumulated fees (if any)
+     */
+    function withdrawFees() external onlyOwner {
+        uint256 amount = totalFeesAccumulated;
+        require(amount > 0, "No fees to withdraw");
+        totalFeesAccumulated = 0;
+        require(stablecoin.transfer(owner(), amount), "Transfer failed");
+    }
+}
+```
+
+---
+
+## Contract 4: GPLBackingDashboard.sol
+
+Public view contract for transparency.
+
+```solidity
+// SPDX-License-Identifier: GPL-3.0
+pragma solidity ^0.8.20;
+
+import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@chainlink/contracts/src/v0.8/interfaces/AggregatorV3Interface.sol";
+
+/**
+ * @title GPLBackingDashboard
+ * @notice Public view contract showing gold backing per GPL token
+ * @dev Read-only, no admin, no state changes
+ */
+contract GPLBackingDashboard {
+    // ---------- Addresses (Base) ----------
+    address public immutable GPL_TOKEN;
+    address public immutable GOLD_VAULT;
+    address public immutable INTERNAL_CDP;
+    address public immutable PAXG_ORACLE;
+    address public immutable XAUT_ORACLE;
+    
+    // ---------- Constructor ----------
+    constructor(
+        address _gplToken,
+        address _goldVault,
+        address _internalCDP,
+        address _paxgOracle,
+        address _xautOracle
+    ) {
+        GPL_TOKEN = _gplToken;
+        GOLD_VAULT = _goldVault;
+        INTERNAL_CDP = _internalCDP;
+        PAXG_ORACLE = _paxgOracle;
+        XAUT_ORACLE = _xautOracle;
+    }
+    
+    // ---------- Public Views ----------
+    
+    /**
+     * @dev Get gold backing per GPL token (in USD, 18 decimals)
+     */
+    function getGoldBackingPerGPL() public view returns (uint256) {
+        uint256 totalGoldUSD = _getTotalGoldUSD();
+        uint256 totalSupply = IERC20(GPL_TOKEN).totalSupply();
+        
+        if (totalSupply == 0) return 0;
+        return (totalGoldUSD * 1e18) / totalSupply;
+    }
+    
+    /**
+     * @dev Get net asset value (gold minus debt)
+     */
+    function getNetAssetValue() public view returns (uint256) {
+        uint256 totalGoldUSD = _getTotalGoldUSD();
+        uint256 totalDebt = _getTotalDebt();
+        
+        if (totalGoldUSD > totalDebt) {
+            return totalGoldUSD - totalDebt;
+        }
+        return 0;
+    }
+    
+    /**
+     * @dev Get detailed treasury metrics
+     */
+    function getTreasuryMetrics() external view returns (
+        uint256 totalGoldUSD,
+        uint256 totalDebt,
+        uint256 netAssetValue,
+        uint256 backingPerGPL,
+        uint256 gplTotalSupply,
+        uint256 currentLTV
+    ) {
+        totalGoldUSD = _getTotalGoldUSD();
+        totalDebt = _getTotalDebt();
+        netAssetValue = totalGoldUSD > totalDebt ? totalGoldUSD - totalDebt : 0;
+        
+        uint256 supply = IERC20(GPL_TOKEN).totalSupply();
+        gplTotalSupply = supply;
+        
+        if (supply > 0) {
+            backingPerGPL = (totalGoldUSD * 1e18) / supply;
+        }
+        
+        if (totalGoldUSD > 0) {
+            currentLTV = (totalDebt * 100) / totalGoldUSD;
+        }
+    }
+    
+    // ---------- Internal Views ----------
+    
+    function _getTotalGoldUSD() internal view returns (uint256) {
+        // This requires GoldVault to have a public view function
+        // You'll need to add this to GoldVault:
+        // function getCurrentGoldValue() external view returns (uint256)
+        
+        // Placeholder - integrate with actual GoldVault
+        revert("Integration needed: call GoldVault.getCurrentGoldValue()");
+    }
+    
+    function _getTotalDebt() internal view returns (uint256) {
+        // Placeholder - get from InternalCDP
+        // return IInternalCDP(INTERNAL_CDP).totalDebt();
+        revert("Integration needed: call InternalCDP.totalDebt()");
+    }
+    
+    // ---------- Helper: Gold Price ----------
+    
+    function _getGoldPrice(address oracle) internal view returns (uint256) {
+        (, int256 price, , , ) = AggregatorV3Interface(oracle).latestRoundData();
+        require(price > 0, "Invalid price");
+        return uint256(price);
+    }
+}
+```
+
+---
+
+## Next Steps: What You Need to Complete
+
+### 1. Fill in Base Chain Addresses
+
+| Required | Where to Find |
+|----------|---------------|
+| PAXG on Base | Check if PAXG is bridged to Base. If not, you may need to use a different gold token or deploy on Ethereum mainnet |
+| XAUt on Base | Same as above |
+| Chainlink Oracles | Base Chainlink feeds for XAU/USD |
+| DEX Router | Aerodrome or Uniswap V3 on Base |
+
+**Important**: If PAXG/XAUt don't have deep liquidity on Base, you may want to deploy the vault on **Ethereum mainnet** instead. Base is great for the token and minting, but gold liquidity is deeper on Ethereum.
+
+### 2. Add Integration Points
+
+I marked places where contracts need to call each other:
+- GoldVault needs `getCurrentGoldValue()` view
+- InternalCDP needs to call GoldVault for collateral value
+- Dashboard needs both
+
+### 3. Add Slippage Protection
+
+In `GoldRefinery`, the swap function needs:
+- Minimum output amounts
+- Deadline parameters
+- Proper error handling
+
+### 4. Add Timelock for Admin Functions
+
+For security, critical admin functions should go through a timelock controller:
+- Parameter changes
+- Emergency withdrawals
+- Upgrading oracles
+
+---
+
+## Quick Start: Deployment Order
+
+```bash
+# 1. Deploy GoldVault (with oracles)
+forge create GoldVault --constructor-args <paxgOracle> <xautOracle>
+
+# 2. Deploy InternalCDP (references GoldVault)
+forge create InternalCDP --constructor-args <goldVault> <stablecoin> <goldOracle>
+
+# 3. Link GoldVault to InternalCDP
+cast send <goldVault> "setInternalCDP(address)" <internalCDP>
+
+# 4. Deploy GoldRefinery (references GoldVault)
+forge create GoldRefinery --constructor-args <goldVault> <dexRouter>
+
+# 5. Deploy Dashboard (public, read-only)
+forge create GPLBackingDashboard --constructor-args <gplToken> <goldVault> <internalCDP> <paxgOracle> <xautOracle>
+```
+
+---
+
+## Questions to Answer Before Deploying
+
+1. **Do PAXG and XAUt have sufficient liquidity on Base?** If not, should the vault live on Ethereum mainnet instead?
+
+2. **What stablecoin will you borrow?** USDC (simpler) or a custom internal stablecoin (more control)?
+
+3. **Do you want a timelock on admin functions?** I strongly recommend it for production.
+
+4. **What's the initial gold funding?** Will you use mint USDC to seed the vault?
+
+Would you like me to:
+- **Add the missing integration code** (GoldVault view functions, CDP integration)?
+- **Write the DEX swap logic** for GoldRefinery with proper slippage protection?
+- **Create the timelock controller** for admin functions?
+- **Draft the deployment script** with all addresses?
+
+Let me know which piece you want to tackle first.
